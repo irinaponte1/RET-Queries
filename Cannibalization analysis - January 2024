@@ -1,0 +1,127 @@
+-- Voy a ver todos los usuarios new_customers de truekind para después buscar cuántos de esos tienen una compra anterior en shm
+
+with first_orders_tk as (
+    select
+        ord.cst_store_customer_email new_email,
+        min(cst_order_date) as date_acquisition
+    from dwh.fact_customer_order ord
+    where cst_store_fk=11
+    and (cst_order_test = '' or cst_order_test is null)
+    and cst_order_type = '1'
+    and cst_store_customer_email not like '%%trafilea%%'
+    and cst_store_ordername_ref not like '%EX%'
+    and cast(cst_order_date as date) >= '2020-01-01'
+    group by 1
+),
+
+    first_orders_shm as (
+    select
+        ord.cst_store_customer_email new_email,
+        min(cst_order_date) as date_acquisition
+    from dwh.fact_customer_order ord
+    where cst_store_fk=8
+    and (cst_order_test = '' or cst_order_test is null)
+    and cst_order_type = '1'
+    and cst_store_customer_email not like '%%trafilea%%'
+    and cst_store_ordername_ref not like '%EX%'
+    and cast(cst_order_date as date) >= '2020-01-01'
+    group by 1
+    ),
+
+    tables_joined as (
+    select
+        tk.new_email,
+        tk.date_acquisition as date_acquisition_tk,
+        shm.date_acquisition as date_acquisition_shm,
+        case when shm.date_acquisition <= tk.date_acquisition then 1
+             when shm.date_acquisition is null then 0
+             when shm.date_acquisition > tk.date_acquisition then 0 else 9 end as user_tk_before_shm
+    from first_orders_tk tk
+    left join first_orders_shm shm
+    on tk.new_email=shm.new_email
+    )
+
+select
+    extract (year from date_acquisition_tk) as year,
+    extract (month from date_acquisition_tk) as month,
+    user_tk_before_shm,
+    count(*)
+from tables_joined
+group by 1,2,3
+order by 1,2,3
+;
+
+
+-- Sobre los new_customers de TK que previamente habían tenido una órden en SHM, voy a ver cuántos de esos tuvieron una tercera compra y en qué store fue
+
+with first_orders_tk as (
+    select
+        ord.cst_store_customer_email new_email,
+        min(cst_order_date) as date_acquisition
+    from dwh.fact_customer_order ord
+    where cst_store_fk=11
+    and (cst_order_test = '' or cst_order_test is null)
+    and cst_order_type = '1'
+    and cst_store_customer_email not like '%%trafilea%%'
+    and cst_store_ordername_ref not like '%EX%'
+    and cast(cst_order_date as date) >= '2020-01-01'
+    group by 1
+),
+
+    first_orders_shm as (
+    select
+        ord.cst_store_customer_email new_email,
+        min(cst_order_date) as date_acquisition
+    from dwh.fact_customer_order ord
+    where cst_store_fk=8
+    and (cst_order_test = '' or cst_order_test is null)
+    and cst_order_type = '1'
+    and cst_store_customer_email not like '%%trafilea%%'
+    and cst_store_ordername_ref not like '%EX%'
+    and cast(cst_order_date as date) >= '2020-01-01'
+    group by 1
+    ),
+
+    tables_joined as (
+    select
+        tk.new_email,
+        tk.date_acquisition as date_acquisition_tk
+    from first_orders_tk tk
+    left join first_orders_shm shm
+    on tk.new_email=shm.new_email
+    where shm.date_acquisition <= tk.date_acquisition
+    ),
+
+    orders_after_tk as (
+    select
+        tk.new_email,
+        date_acquisition_tk,
+        ord.cst_store_fk,
+        ord.cst_order_date,
+        ROW_NUMBER() OVER (PARTITION BY (tk.new_email) ORDER BY ord.cst_order_date) as orders_after_tk_acq
+        -- acá sumar store, fecha de la orden, row_number
+    from tables_joined tk
+    left join dwh.fact_customer_order ord
+    on tk.new_email=ord.cst_store_customer_email
+    where cst_store_fk in (11,8)
+    and (cst_order_test = '' or cst_order_test is null)
+    and cst_order_type = '1'
+    and cst_store_customer_email not like '%%trafilea%%'
+    and cst_store_ordername_ref not like '%EX%'
+    and cast(cst_order_date as date) >= '2020-01-01'
+    and ord.cst_order_date > date_acquisition_tk
+    )
+
+-- select * from orders_after_tk;
+
+select
+    extract (year from date_acquisition_tk) as year,
+    extract (month from date_acquisition_tk) as month,
+    cst_store_fk,
+    count(*)
+from orders_after_tk
+where orders_after_tk_acq=1
+group by 1,2,3
+order by 1,2,3
+;
+
